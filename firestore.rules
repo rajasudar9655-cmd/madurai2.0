@@ -1,0 +1,59 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Default Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Helper functions
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    // Validation for User entity
+    function isValidUser(data) {
+      return data.keys().hasAll(['userId', 'email']) &&
+             data.keys().size() <= 6 &&
+             data.userId == request.auth.uid &&
+             data.userId is string && data.userId.size() <= 128 &&
+             data.email is string && data.email.size() <= 256;
+    }
+
+    // Validation for ChatSession entity
+    function isValidChat(data) {
+      return data.keys().hasAll(['id', 'title', 'lastUpdated', 'messages']) &&
+             data.keys().size() <= 6 &&
+             data.id is string && data.id.size() <= 128 &&
+             data.title is string && data.title.size() <= 500 &&
+             data.lastUpdated is string &&
+             data.messages is list &&
+             data.messages.size() <= 500; // Limit chat length
+    }
+
+    match /users/{userId} {
+      allow get: if isOwner(userId);
+      allow create: if isOwner(userId) && isValidUser(request.resource.data);
+      allow update: if isOwner(userId) && isValidUser(request.resource.data) && (request.resource.data.diff(resource.data).affectedKeys().hasOnly(['lastSeen', 'displayName', 'photoURL']));
+
+      match /chats/{chatId} {
+        allow list, get: if isOwner(userId);
+        allow create: if isOwner(userId) && isValidId(chatId) && isValidChat(request.resource.data);
+        allow update: if isOwner(userId) && (
+          isValidChat(request.resource.data) && 
+          request.resource.data.id == resource.data.id &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['title', 'lastUpdated', 'messages'])
+        );
+        allow delete: if isOwner(userId);
+      }
+    }
+  }
+}
